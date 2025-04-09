@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.pyc
+# .env
+
+# Node
+node_modules/
+# .env
+
+# VS Code or other IDEs
+.vscode/
+
+# PDF uploads (optional)
+uploads/
+*.pdf

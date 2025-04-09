@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>PDF Chat</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    #chatBox div {
+      margin-bottom: 10px;
+    }
+    .ai-response strong {
+      color: #f39c12;
+    }
+    .ai-response em {
+      color: #d63384;
+    }
+    .ai-response code {
+      background: #f8f9fa;
+      padding: 2px 4px;
+      border-radius: 4px;
+      font-family: monospace;
+    }
+  </style>
+</head>
+<body class="bg-light">
+  <div class="container mt-5">
+    <h3 class="mb-4">Chat with Your PDF</h3>
+
+    <!-- Upload Form -->
+    <form id="uploadForm" enctype="multipart/form-data">
+      <input type="file" name="pdf" class="form-control mb-2" required />
+      <button type="submit" class="btn btn-primary mb-4">Upload PDF</button>
+    </form>
+
+    <!-- Chat Display -->
+    <div id="chatBox" class="border p-3 mb-3 bg-white" style="height: 300px; overflow-y: auto;"><div class="ai-response"><strong>AI:</strong> Hey! How can I help you?</div></div>
+
+    <!-- Question Form -->
+    <form id="chatForm">
+      <div class="input-group">
+        <input type="text" id="question" class="form-control" placeholder="Ask a question..." required />
+        <button class="btn btn-success">Send</button>
+      </div>
+    </form>
+  </div>
+
+  <script>
+    const chatBox = document.getElementById("chatBox");
+
+    function formatMarkdown(text) {
+      return text
+        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')  // Bold
+        .replace(/\*(.*?)\*/g, '<em>$1</em>')              // Italic
+        .replace(/`(.*?)`/g, '<code>$1</code>');           // Inline code
+    }
+
+    document.getElementById("uploadForm").addEventListener("submit", async function (e) {
+      e.preventDefault();
+      const formData = new FormData(this);
+      const res = await fetch("http://localhost:3000/upload", {
+        method: "POST",
+        body: formData
+      });
+      const data = await res.json();
+      alert(data.message || "Uploaded!");
+    });
+
+    document.getElementById("chatForm").addEventListener("submit", async function (e) {
+      e.preventDefault();
+      const question = document.getElementById("question").value;
+
+      // Show user question
+      chatBox.innerHTML += `<div><strong>You:</strong> ${question}</div>`;
+      chatBox.scrollTop = chatBox.scrollHeight;
+
+      const res = await fetch("http://localhost:3000/ask", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question })
+      });
+
+      const data = await res.json();
+      const formattedAnswer = formatMarkdown(data.answer);
+
+      // Show AI answer with formatting
+      chatBox.innerHTML += `<div class="ai-response"><strong>AI:</strong> ${formattedAnswer}</div>`;
+      chatBox.scrollTop = chatBox.scrollHeight;
+      document.getElementById("question").value = "";
+    });
+  </script>
+</body>
+</html>
