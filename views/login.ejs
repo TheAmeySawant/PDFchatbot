@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <title>Login / Signup | PDF Chatbot</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <link rel="icon" type="image/x-icon" href="/images/favicon.ico">
+
+  <style>
+    body {
+      background-color: #f8f9fa;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+    }
+
+    .card-container {
+      width: 100%;
+      max-width: 400px;
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .form-card {
+      position: absolute;
+      width: 100%;
+      transition: all 0.5s ease-in-out;
+      opacity: 0;
+      transform: translateX(100%);
+      z-index: 1;
+    }
+
+    .form-card.active {
+      opacity: 1;
+      transform: translateX(0);
+      z-index: 2;
+    }
+
+    .form-card.exit-left {
+      transform: translateX(-100%);
+      opacity: 0;
+    }
+
+    .switch-link {
+      color: #0d6efd;
+      cursor: pointer;
+      text-decoration: underline;
+    }
+
+    .switch-link:hover {
+      text-decoration: none;
+    }
+  </style>
+</head>
+
+<body>
+  <script>
+    function switchTo(mode) {
+      const loginCard = document.getElementById("loginCard");
+      const signupCard = document.getElementById("signupCard");
+
+      if (mode === "signup") {
+        loginCard.classList.remove("active");
+        loginCard.classList.add("exit-left");
+        signupCard.classList.add("active");
+        signupCard.classList.remove("exit-left");
+      } else {
+        signupCard.classList.remove("active");
+        signupCard.classList.add("exit-left");
+        loginCard.classList.add("active");
+        loginCard.classList.remove("exit-left");
+      }
+    }
+
+    
+  </script>
+  <div class="card-container">
+    <!-- Login Card -->
+    <div id="loginCard" class="card p-4 form-card active">
+      <h4 class="mb-3">Login to PDF Chat</h4>
+      <form id="loginForm">
+        <div class="mb-3">
+          <label for="loginEmail" class="form-label">Email</label>
+          <input type="email" class="form-control" name="email" id="loginEmail" required />
+        </div>
+        <div class="mb-3">
+          <label for="loginPassword" class="form-label">Password</label>
+          <input type="password" class="form-control" name="password" id="loginPassword" required />
+        </div>
+        <% if(loginStatus == 2){ %>
+          <div class="alert alert-danger mb-3" role="alert">
+            Email or Password incorrect
+          </div>
+        <% } %>
+        <button type="submit" class="btn btn-primary w-100">Login</button>
+      </form>
+      <p class="text-center mt-3">
+        Don't have an account?
+        <span class="switch-link" onclick="switchTo('signup')">Sign up</span>
+      </p>
+    </div>
+
+    <!-- Signup Card -->
+    <div id="signupCard" class="card p-4 form-card">
+      <h4 class="mb-3">Create an Account</h4>
+      <form id="signupForm" action="/create-user" method="post">
+        <div class="mb-3">
+          <label for="signupName" class="form-label">Full Name</label>
+          <input type="text" name="fullName" class="form-control" id="signupName" required />
+        </div>
+        <div class="mb-3">
+          <label for="signupEmail" class="form-label">Email</label>
+          <input type="email" name="email" class="form-control" id="signupEmail" required />
+        </div>
+        <div class="mb-3">
+          <label name="password" for="signupPassword" class="form-label">Password</label>
+          <input type="password" class="form-control" id="signupPassword" required />
+        </div>
+        <% if(loginStatus == 1){ %>
+          <script>switchTo('signup');</script>
+          <div class="alert alert-danger mb-3" role="alert">
+            User with this email already exits
+          </div>
+        <% } %>
+        <button type="submit" class="btn btn-success w-100">Sign Up</button>
+      </form>
+      <p class="text-center mt-3">
+        Already have an account?
+        <span class="switch-link" onclick="switchTo('login')">Login</span>
+      </p>
+    </div>
+  </div>
+
+  <script>
+    // Helper to show loading animation
+    function showLoading(button, text) {
+      button.disabled = true;
+      button.innerHTML = `
+        <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+        ${text}
+      `;
+    }
+  
+    // Signup submission
+    document.getElementById("signupForm").addEventListener("submit", async function (e) {
+      e.preventDefault();
+  
+      const signupBtn = document.querySelector("#signupForm button");
+      showLoading(signupBtn, "Signing up...");
+  
+      const formData = {
+        fullName: document.getElementById("signupName").value,
+        email: document.getElementById("signupEmail").value,
+        password: document.getElementById("signupPassword").value,
+      };
+  
+      try {
+        const res = await fetch("/create-user", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(formData),
+        });
+  
+        if (res.redirected) {
+          window.location.href = res.url; // Follows backend redirect (/, /login/1)
+        } else {
+          const data = await res.json();
+          alert(data.status || "Something went wrong.");
+        }
+      } catch (err) {
+        console.error("Signup Error:", err);
+        alert("Failed to signup.");
+      } finally {
+        signupBtn.disabled = false;
+        signupBtn.innerHTML = "Sign Up";
+      }
+    });
+  
+    // Login submission
+    document.getElementById("loginForm").addEventListener("submit", async function (e) {
+      e.preventDefault();
+  
+      const loginBtn = document.querySelector("#loginForm button");
+      showLoading(loginBtn, "Logging in...");
+  
+      const formData = {
+        email: document.getElementById("loginEmail").value,
+        password: document.getElementById("loginPassword").value,
+      };
+  
+      try {
+        const res = await fetch("/verify-login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(formData),
+        });
+  
+        if (res.redirected) {
+          window.location.href = res.url; // Should be "/" or /login/2 on error
+        } else {
+          const data = await res.json();
+          alert(data.status || "Something went wrong.");
+        }
+      } catch (err) {
+        console.error("Login Error:", err);
+        alert("Failed to login.");
+      } finally {
+        loginBtn.disabled = false;
+        loginBtn.innerHTML = "Login";
+      }
+    });
+  </script>
+  
+</body>
+
+</html>
