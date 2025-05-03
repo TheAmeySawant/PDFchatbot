@@ -7,7 +7,9 @@ import traceback
 import requests
 import json
 import sys
+from dotenv import load_dotenv
 
+load_dotenv()  # Add this near the top of your file
 
 sys.stdout.reconfigure(encoding='utf-8') #make output on console error free (mostly)
 
@@ -18,7 +20,7 @@ CORS(app)
 
 # DeepSeek API details
 DEEPSEEK_API_URL = "https://openrouter.ai/api/v1/chat/completions"
-DEEPSEEK_API_KEY = "Bearer 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"  # Replace with your actual key
+DEEPSEEK_API_KEY = os.getenv('DEEPSEEK_API_KEY')  # Replace the hardcoded API key with environment variable
 
 
 pdf_data = {
@@ -99,9 +101,10 @@ def ask_question():
 
         deepseek_response = query_deepseek(question)
 
-        if deepseek_response.status_code != 200:
-            print(f"[ERROR] DeepSeek API failed: {deepseek_response.status_code}", deepseek_response.text)
-            return jsonify({"answer": "Sorry, DeepSeek API failed to respond properly."}), 500
+        if(deepseek_response.status_code):
+            if deepseek_response.status_code != 200:
+                print(f"[ERROR] DeepSeek API failed: {deepseek_response.status_code}", deepseek_response.text)
+                return jsonify({"answer": "Sorry, DeepSeek API failed to respond properly."}), 500
 
         deepseek_answer = deepseek_response.json()["choices"][0]["message"]["content"]
         return jsonify({"answer": deepseek_answer})
@@ -114,92 +117,108 @@ def ask_question():
 
 @app.route('/ask-target', methods=['POST'])
 def ask_question_target():
+    print("\n[Python] /ask-target route called")
+    data = request.json
+    question = data['question']
+    pdf_data = data['pdfData']
+    chat_history = data.get('chatHistory', '')
+    token_limits = data.get('tokenLimits', {})
+
+    print("[Python] Question:", question)
+    print("[Python] PDF title:", pdf_data['meta_info']['Title'])
+    print("[Python] PDF content length:", len(pdf_data['text']))
+    print("[Python] Chat history length:", len(chat_history))
+    print("[Python] Token limits:", token_limits)
+
     try:
-        question = request.json.get("question")
-        pdata = request.json.get("pdfData")
-        print(f"[INFO] Question: {question}")
-        print(f"[INFO] pdfData: {pdata}")
-
-        deepseek_response = query_deepseek(question, pdata)
-
-        if deepseek_response.status_code != 200:
-            print(f"[ERROR] DeepSeek API failed: {deepseek_response.status_code}", deepseek_response.text)
-            return jsonify({"answer": "Sorry, DeepSeek API failed to respond properly."}), 500
-
-        deepseek_answer = deepseek_response.json()["choices"][0]["message"]["content"]
-        return jsonify({"answer": deepseek_answer})
-
-    except Exception as e:
-        print("[ERROR] Exception in /ask route:")
-        traceback.print_exc()
-        
-        return jsonify({"answer": "Sorry, there was an error processing your question."}), 500
-
-def query_deepseek(user_question, pdata = None):
-    try:
-        if pdata == None:
-            pdata = pdf_data
-        # Ensure pdf_data is available
-        if not pdata.get("text", "").strip():
-            raise ValueError("PDF content is empty. Please process a valid PDF first.")
-
-
-        # Prepare context
+        # Construct context with PDF content and chat history
         context = f"""
-        This PDF contains the following metapdata:
-        - Title: {pdata["meta_info"].get("Title", "Unknown")}
-        - Author: {pdata["meta_info"].get("Author", "Unknown")}
-        - Pages: {pdata["meta_info"].get("Pages", "Unknown")}
+PDF Content:
+{pdf_data['text']}
 
-        Content:
-        {pdata["text"]}
+PDF Metadata:
+Title: {pdf_data['meta_info']['Title']}
+Author: {pdf_data['meta_info']['Author']}
+Pages: {pdf_data['meta_info']['Pages']}
 
-        (In your response do not mention the above data. directly answer the question instead of saying like from you content/data wahtever
-        You may use phrases like from the pdf you uploaded.
-        because i am using your api in my project so act like a pdf bot)
+Previous Conversation:
+{chat_history}
 
-        Now answer this question:
-        {user_question}
-        """ 
+Current Question: {question}
+"""
+        print("[Python] Context constructed, length:", len(context))
+        print("[Python] Calling DeepSeek API...")
+        
+        response = query_deepseek(context, token_limits)
+        print("[Python] Got response from DeepSeek")
+        print("[Python] Response length:", len(response))
+        
+        return jsonify({"answer": response})
+    except Exception as e:
+        print(f"[Python] Error in ask_question_target: {str(e)}")
+        return jsonify({"error": str(e)}), 500
 
+def query_deepseek(user_question, token_limits=None):
+    try:
+        print("[Python] Starting query_deepseek")
+        context = user_question
+        
         headers = {
             "Authorization": DEEPSEEK_API_KEY,
             "Content-Type": "application/json",
-            "HTTP-Referer": "http://localhost",
+            "HTTP-Referer": "http://localhost:3000",
             "X-Title": "PDFChatBot"
         }
 
+        messages = [
+            {"role": "system", "content": "You are a helpful PDF assistant."},
+            {"role": "user", "content": context}
+        ]
+
         data = {
             "model": "deepseek/deepseek-chat:free",
-            "messages": [
-                {"role": "user", "content": context}
-            ]
+            "messages": messages,
+            "temperature": 0.3,
+            "max_tokens": token_limits.get("aiResponse", 2048) if token_limits else 2048
         }
 
+        print("[Python] Preparing DeepSeek API request")
+        print("[Python] Token limit:", data["max_tokens"])
+        print("[Python] Message lengths:", [len(m["content"]) for m in messages])
+        
         response = requests.post(
-            "https://openrouter.ai/api/v1/chat/completions",
+            DEEPSEEK_API_URL,
             headers=headers,
-            data=json.dumps(data),
-            timeout=15  # optional: avoid hanging
+            json=data,
+            timeout=30
         )
-
-        response.raise_for_status()  # Raise HTTPError for bad status codes
-
-        print("Status Code:", response.status_code)
-        print("Response JSON:", response.json())
-
-        return response
+        
+        print(f"[Python] DeepSeek API Status: {response.status_code}")
+        
+        if response.status_code != 200:
+            print(f"[Python] DeepSeek API Error Response: {response.text}")
+            return "I apologize, but I'm having trouble processing your request at the moment. Please try again."
+            
+        response_json = response.json()
+        if not response_json.get("choices"):
+            print("[Python] No choices in response:", response_json)
+            return "I apologize, but I received an invalid response. Please try again."
+            
+        answer = response_json["choices"][0]["message"]["content"]
+        print("[Python] Successfully got answer from DeepSeek")
+        print("[Python] Answer length:", len(answer))
+        return answer
 
     except requests.exceptions.Timeout:
-        print("[ERROR] Request timed out.")
-    except requests.exceptions.HTTPError as http_err:
-        print(f"[ERROR] HTTP error occurred: {http_err}")
-    except requests.exceptions.RequestException as req_err:
-        print(f"[ERROR] Request exception occurred: {req_err}")
-    except ValueError as val_err:
-        print(f"[ERROR] Value error: {val_err}")
+        print("[Python] DeepSeek API timeout after 30 seconds")
+        return "I apologize, but the request timed out. Please try again."
+    except requests.exceptions.RequestException as e:
+        print(f"[Python] Network error in query_deepseek: {str(e)}")
+        return "I apologize, but there was a network error. Please try again."
     except Exception as e:
-        print(f"[ERROR] Unexpected error: {e}")
+        print(f"[Python] Unexpected error in query_deepseek: {str(e)}")
+        print("[Python] Error traceback:", traceback.format_exc())
+        return "I apologize, but an unexpected error occurred. Please try again."
 
 if __name__ == '__main__':
     app.run(port=5001, debug=True)
