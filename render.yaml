@@ -1,0 +1,31 @@
+services:
+  # Node.js web server
+  - type: web
+    name: pdfchat-web
+    env: node
+    buildCommand: npm install
+    startCommand: NODE_ENV=production node server.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: MONGODB_URI
+        sync: false # User needs to set this
+      - key: DEEPSEEK_API_KEY
+        sync: false # User needs to set this
+      - key: CORS_ORIGIN
+        fromService:
+          name: pdfchat-web
+          type: web
+          property: url
+
+  # Python API server
+  - type: web
+    name: pdfchat-python
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python deepseek_server.py
+    envVars:
+      - key: PYTHON_PORT
+        value: 5001
+      - key: DEEPSEEK_API_KEY
+        sync: false # User needs to set this

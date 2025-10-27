@@ -364,6 +364,7 @@ app.post("/ask/:sessionId", async (req, res) => {
   console.log("[Backend] /ask/:sessionId route called");
   console.log("[Backend] SessionId:", sessionId);
   console.log("[Backend] Question:", question);
+  console.log("[Backend] TokenLimits:", tokenLimits);
 
   try {
     let tempSession;

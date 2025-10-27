@@ -1,3 +1,4 @@
+from unittest import result
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import os
@@ -20,8 +21,11 @@ CORS(app)
 
 # DeepSeek API details
 DEEPSEEK_API_URL = "https://openrouter.ai/api/v1/chat/completions"
-DEEPSEEK_API_KEY = os.getenv('DEEPSEEK_API_KEY')  # Replace the hardcoded API key with environment variable
-
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")  # Replace the hardcoded API key with environment variable
+HUGGINGFACE_API_KEY = os.getenv("HUGGINGFACE_API_KEY")
+HF_API_URL = "https://api-inference.huggingface.co/models/meta-llama/Llama-3.1-405B"
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 pdf_data = {
     "text" : "",
@@ -61,7 +65,8 @@ def extract_pdf_info(pdf_path):
         pdf_data["meta_info"]["Pages"] = page_count
 
         # Safe print
-        print(json.dumps(pdf_data, indent=2, ensure_ascii=False))
+        # print(json.dumps(pdf_data, indent=2, ensure_ascii=False))
+        print (json.dumps(pdf_data["meta_info"]["Pages"], indent=2, ensure_ascii=False))
 
     except FileNotFoundError:
         print("[ERROR] PDF file not found.")
@@ -99,15 +104,24 @@ def ask_question():
         question = request.json.get("question")
         print(f"[INFO] Question: {question}")
 
-        deepseek_response = query_deepseek(question)
+        # ollama_response = query_ollama(question)
 
-        if(deepseek_response.status_code):
-            if deepseek_response.status_code != 200:
-                print(f"[ERROR] DeepSeek API failed: {deepseek_response.status_code}", deepseek_response.text)
-                return jsonify({"answer": "Sorry, DeepSeek API failed to respond properly."}), 500
+        groq_response = query_groq(question)
 
-        deepseek_answer = deepseek_response.json()["choices"][0]["message"]["content"]
-        return jsonify({"answer": deepseek_answer})
+        # deepseek_response = query_deepseek(question)
+
+        # if(deepseek_response.status_code):
+        #     if deepseek_response.status_code != 200:
+        #         print(f"[ERROR] DeepSeek API failed: {deepseek_response.status_code}", deepseek_response.text)
+        #         return jsonify({"answer": "Sorry, DeepSeek API failed to respond properly."}), 500
+
+        # deepseek_answer = deepseek_response.json()["choices"][0]["message"]["content"]
+
+        # return jsonify({"answer": deepseek_answer})
+
+        return jsonify({"answer": groq_response})
+    
+        # return jsonify({"answer": ollama_response})
 
     except Exception as e:
         print("[ERROR] Exception in /ask route:")
@@ -147,9 +161,12 @@ Previous Conversation:
 Current Question: {question}
 """
         print("[Python] Context constructed, length:", len(context))
-        print("[Python] Calling DeepSeek API...")
+        print("[Python] Calling API...")
         
-        response = query_deepseek(context, token_limits)
+        # response = query_deepseek(context, token_limits)
+        # response = query_ollama(context)
+        response = query_groq(context)
+
         print("[Python] Got response from DeepSeek")
         print("[Python] Response length:", len(response))
         
@@ -176,7 +193,7 @@ def query_deepseek(user_question, token_limits=None):
         ]
 
         data = {
-            "model": "deepseek/deepseek-chat:free",
+            "model": "deepseek/deepseek-chat-v3-0324:free",
             "messages": messages,
             "temperature": 0.3,
             "max_tokens": token_limits.get("aiResponse", 2048) if token_limits else 2048
@@ -214,11 +231,114 @@ def query_deepseek(user_question, token_limits=None):
         return "I apologize, but the request timed out. Please try again."
     except requests.exceptions.RequestException as e:
         print(f"[Python] Network error in query_deepseek: {str(e)}")
-        return "I apologize, but there was a network error. Please try again."
+        return f"Network error: {str(e)}" 
     except Exception as e:
         print(f"[Python] Unexpected error in query_deepseek: {str(e)}")
         print("[Python] Error traceback:", traceback.format_exc())
         return "I apologize, but an unexpected error occurred. Please try again."
+
+
+def query_ollama(prompt, model="llama3.1:8b", stream=False):
+    """
+    Query the local Ollama model running on http://localhost:11434
+    """
+    try:
+        print("[Python] Sending request to Ollama...")
+        
+        # url = "http://localhost:11434/api/generate"
+        url = HF_API_URL
+        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {HUGGINGFACE_API_KEY}"}
+
+        payload = {
+            "model": model,
+            "inputs": prompt,
+            "stream": stream  # You can set to True if you want streaming later
+        }
+
+        response = requests.post(url, headers=headers, json=payload)
+        response.raise_for_status()
+
+        # Ollama streams chunks if `stream=True`, but returns full text if `stream=False`
+        # result_text = ""
+        # for line in response.iter_lines():
+        #     if line:
+        #         try:
+        #             data = json.loads(line.decode("utf-8"))
+        #             if "response" in data:
+        #                 result_text += data["response"]
+        #         except json.JSONDecodeError:
+        #             continue
+
+        # print("[Python] Received response from Ollama.")
+        # return result_text.strip() or "No response generated."
+
+        # Hugging Face sometimes returns a list, sometimes a dict
+        if isinstance(result, list) and len(result) > 0:
+            return result[0].get("generated_text", "")
+        elif isinstance(result, dict) and "generated_text" in result:
+            return result["generated_text"]
+        else:
+            return "No valid response from model."
+
+    except requests.exceptions.RequestException as e:
+        print(f"[Python] Error communicating with Ollama: {str(e)}")
+        return "⚠️ Unable to reach the Ollama server. Make sure it's running with `ollama serve`."
+
+#Llama 3.3 70B Versatile on Groq
+def query_groq(prompt, model="llama-3.3-70b-versatile", token_limits=None):
+    """
+    Query the Groq API using Llama 3.3 70B Versatile model.
+    Designed to be easily integrated with /ask and /ask-target routes.
+    """
+    try:
+        print("[Python] Sending request to Groq API...")
+
+        headers = {
+            "Authorization": f"Bearer {GROQ_API_KEY}",
+            "Content-Type": "application/json"
+        }
+
+        messages = [
+            {"role": "system", "content": "You are a helpful AI assistant specialized in analyzing and summarizing PDF content."},
+            {"role": "user", "content": prompt}
+        ]
+
+        payload = {
+            "model": model,
+            "messages": messages,
+            "temperature": 0.3,
+            "max_tokens": token_limits.get("aiResponse", 2048) if token_limits else 2048
+        }
+
+        response = requests.post(GROQ_API_URL, headers=headers, json=payload, timeout=30)
+        print(f"[Python] Groq API Status: {response.status_code}")
+
+        if response.status_code != 200:
+            print(f"[ERROR] Groq API Error: {response.text}")
+            return "⚠️ Groq API failed to respond properly. Please try again later."
+
+        response_json = response.json()
+        if "choices" not in response_json or not response_json["choices"]:
+            print("[Python] Groq API returned an invalid response:", response_json)
+            return "⚠️ Groq API returned an empty response."
+
+        answer = response_json["choices"][0]["message"]["content"]
+        print("[Python] Successfully got response from Groq")
+        print("[Python] Answer length:", len(answer))
+        return answer
+
+    except requests.exceptions.Timeout:
+        print("[ERROR] Groq API request timed out.")
+        return "⚠️ Groq API timed out. Please try again."
+    except requests.exceptions.RequestException as e:
+        print(f"[ERROR] Network issue communicating with Groq API: {e}")
+        return f"⚠️ Network error: {str(e)}"
+    except Exception as e:
+        print(f"[ERROR] Unexpected error in query_groq: {e}")
+        traceback.print_exc()
+        return "⚠️ Unexpected error occurred while querying Groq."
+
+
 
 if __name__ == '__main__':
     app.run(port=5001, debug=True)
