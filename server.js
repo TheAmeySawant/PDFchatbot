@@ -12,9 +12,9 @@ const userModel = require("./dbmodels/user");
 const { marked } = require('marked');
 const xss = require("xss");
 const { userInfo } = require("os");
-const secret = "Yash Pawar";
+const secret = "Amey Sawant";
 
-// Configure marked options
+// Configure marked options.
 marked.setOptions({
   headerIds: false,
   mangle: false

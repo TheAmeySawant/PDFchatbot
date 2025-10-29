@@ -5,10 +5,11 @@ import os
 import pdfplumber
 import numpy as np
 import traceback
-import requests
+import requests, time
 import json
 import sys
 from dotenv import load_dotenv
+import traceback
 
 load_dotenv()  # Add this near the top of your file
 
@@ -19,13 +20,15 @@ app = Flask(__name__)
 CORS(app)
 
 
-# DeepSeek API details
+# API URLs and Keys
 DEEPSEEK_API_URL = "https://openrouter.ai/api/v1/chat/completions"
-DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")  # Replace the hardcoded API key with environment variable
-HUGGINGFACE_API_KEY = os.getenv("HUGGINGFACE_API_KEY")
 HF_API_URL = "https://api-inference.huggingface.co/models/meta-llama/Llama-3.1-405B"
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
+
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")  
+HUGGINGFACE_API_KEY = os.getenv("HUGGINGFACE_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+
 
 pdf_data = {
     "text" : "",
@@ -48,7 +51,6 @@ def determine_pdf_title(metadata, text):
         if clean_line:
             return clean_line[:80]  # optional: limit title length
     return "Untitled PDF"
-
 
 def extract_pdf_info(pdf_path):
     print("[Python] Pdf Path:", pdf_path)
@@ -77,7 +79,6 @@ def extract_pdf_info(pdf_path):
 
     return pdf_data
 
-
 @app.route('/process', methods=['POST'])
 def process_pdf():
     try:
@@ -98,6 +99,8 @@ def process_pdf():
         traceback.print_exc()
         return jsonify({"status": "error", "message": "Internal server error"}), 500
 
+
+
 @app.route('/ask', methods=['POST'])
 def ask_question():
     try:
@@ -106,7 +109,9 @@ def ask_question():
 
         # ollama_response = query_ollama(question)
 
-        groq_response = query_groq(question)
+        # groq_response = query_groq(question)
+
+        groq_response = query_multiple_groq(question)
 
         # deepseek_response = query_deepseek(question)
 
@@ -165,7 +170,8 @@ Current Question: {question}
         
         # response = query_deepseek(context, token_limits)
         # response = query_ollama(context)
-        response = query_groq(context)
+        # response = query_groq(context)
+        response = query_multiple_groq(context)
 
         print("[Python] Got response from DeepSeek")
         print("[Python] Response length:", len(response))
@@ -247,7 +253,9 @@ def query_ollama(prompt, model="llama3.1:8b", stream=False):
         
         # url = "http://localhost:11434/api/generate"
         url = HF_API_URL
-        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {HUGGINGFACE_API_KEY}"}
+        headers = {"Content-Type": "application/json",
+                    "Authorization": f"Bearer {HUGGINGFACE_API_KEY}"
+                    }
 
         payload = {
             "model": model,
@@ -257,6 +265,7 @@ def query_ollama(prompt, model="llama3.1:8b", stream=False):
 
         response = requests.post(url, headers=headers, json=payload)
         response.raise_for_status()
+
 
         # Ollama streams chunks if `stream=True`, but returns full text if `stream=False`
         # result_text = ""
@@ -337,6 +346,104 @@ def query_groq(prompt, model="llama-3.3-70b-versatile", token_limits=None):
         print(f"[ERROR] Unexpected error in query_groq: {e}")
         traceback.print_exc()
         return "⚠️ Unexpected error occurred while querying Groq."
+
+
+# Model priority list (top = primary)
+MODEL_FALLBACKS = [
+    "llama-3.3-70b-versatile",          # primary
+    "meta-llama/llama-4-scout-17b-16e-instruct",  # high-quality backup
+    "moonshotai/kimi-k2-instruct-0905", # solid, general-purpose fallback
+    "llama-3.1-8b-instant"              # fast, light fallback
+]
+
+
+def query_multiple_groq(prompt, token_limits=None):
+    """
+    Query Groq API with automatic fallback when rate limit (TPM) is hit.
+    If Retry-After ≤ 3s, waits and retries the same model.
+    If Retry-After > 3s, switches to next model immediately.
+    """
+    headers = {
+        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Content-Type": "application/json"
+    }
+
+    messages = [
+        {
+            "role": "system",
+            "content": "You are a helpful AI assistant specialized in analyzing and summarizing PDF content."
+        },
+        {"role": "user", "content": prompt}
+    ]
+
+    for model in MODEL_FALLBACKS:
+        print(f"[Python] Attempting with model: {model}")
+
+        while True:  # inner loop to retry same model if wait time ≤ 3s
+            payload = {
+                "model": model,
+                "messages": messages,
+                "temperature": 0.3,
+                "max_tokens": token_limits.get("aiResponse", 2048) if token_limits else 2048
+            }
+
+            try:
+                response = requests.post(GROQ_API_URL, headers=headers, json=payload, timeout=30)
+                print(f"[Python] Groq API Status ({model}): {response.status_code}")
+
+                # ✅ Successful response
+                if response.status_code == 200:
+                    response_json = response.json()
+                    if "choices" in response_json and response_json["choices"]:
+                        answer = response_json["choices"][0]["message"]["content"]
+                        print(f"[Python] ✅ Success with {model} (response length {len(answer)})")
+                        return answer
+                    else:
+                        print("[ERROR] Invalid response format:", response_json)
+                        return "⚠️ Groq API returned an empty or invalid response."
+
+                # ⚠️ Handle rate limit (429)
+                elif response.status_code == 429:
+                    retry_after = response.headers.get("Retry-After")
+                    if retry_after:
+                        wait_time = float(retry_after)
+                        print(f"[WARNING] Rate limit hit on {model}. Retry-After: {wait_time}s")
+
+                        if wait_time <= 3:
+                            print(f"[Python] Waiting {wait_time}s before retrying {model}...")
+                            time.sleep(wait_time)
+                            continue  # retry same model
+                        else:
+                            print(f"[Python] Wait time too long ({wait_time}s). Switching to next model...")
+                            break  # go to next model
+                    else:
+                        print("[Python] No Retry-After header. Switching to next model...")
+                        break
+
+                # ⚠️ Handle server errors
+                elif 500 <= response.status_code < 600:
+                    print(f"[WARNING] Server error on {model}, trying next model...")
+                    break
+
+                # ⚠️ Other API errors
+                else:
+                    print(f"[ERROR] Groq API Error ({model}): {response.text}")
+                    break
+
+            except requests.exceptions.Timeout:
+                print(f"[ERROR] Timeout on {model}, trying next model...")
+                break
+            except requests.exceptions.RequestException as e:
+                print(f"[ERROR] Network issue with {model}: {e}")
+                break
+            except Exception as e:
+                print(f"[ERROR] Unexpected error with {model}: {e}")
+                traceback.print_exc()
+                break
+
+    # ❌ If all models fail
+    print("[FATAL] ❌ All models failed. Please try again later.")
+    return "⚠️ All Groq models are currently busy or unreachable. Please try again later."
 
 
 
